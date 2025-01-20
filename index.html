@@ -202,6 +202,11 @@
       frame?.delete();
     }
 
+    /**
+     * モノクロ化
+     * @param {cv.Mat} srcImg 入力画像
+     * @preturn {cv.Mat} モノクロ化した画像
+     */
     function monochromatize(srcImg) {
       const grayImg = new cv.Mat(FRAME_SIZE, FRAME_SIZE, cv.CV_8UC1);
       cv.cvtColor(srcImg, grayImg, cv.COLOR_BGR2GRAY);
@@ -211,6 +216,11 @@
       return monoImg;
     }
 
+    /**
+     * 枠の検出
+     * @param {cv.Mat} srcImg 入力画像
+     * @return {cv.Mat} 検出した枠の座標。検出できなかったときはnull。
+     */
     function detectFrame(srcImg) {
       const contours = new cv.MatVector();
       const hierarchy = new cv.Mat();
@@ -242,6 +252,12 @@
       return quadrangle.size().height == 4 ? quadrangle : null;
     }
 
+    /**
+     * 枠を抜き出す
+     * @param {cv.Mat} srcImg 元の画像
+     * @param {cv.Mat} frame 枠の座標
+     * @return {cv.Mat} 抜き出した画像
+     */
     function extractFrame(srcImg, frame) {
       const points = [];
 
