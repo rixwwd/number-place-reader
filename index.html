@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="utf-8">
+  <link href="https://cdn.jsdelivr.net/npm/normalize.css@8.0.1/normalize.css" rel="stylesheet" />
+  <style>
+    #input {
+      position: static;
+      width: 720px;
+      height: 720px;
+    }
+
+    #camera {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 720px;
+      height: 720px;
+    }
+
+    #snapshotCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 720px;
+      height: 720px;
+    }
+
+    #inputCanvas {
+      display: none;
+    }
+
+    #frameCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 720px;
+      height: 720px;
+      z-index: 1;
+    }
+  </style>
+  <script src="https://docs.opencv.org/4.10.0/opencv.js"></script>
+</head>
+
+<body>
+  <div id="input">
+    <canvas id="inputCanvas"></canvas>
+    <video id="camera"></video>
+    <canvas id="snapshotCanvas"></canvas>
+    <canvas id="frameCanvas" width="720" height="720"></canvas>
+  </div>
+  <div>
+    <button id="startCamera">カメラ開始</button>
+    <button id="capture">撮影</button>
+    <input id="selectImage" type="file" accept="image/*">
+    <button id="process">処理開始</button>
+  </div>
+  <div>
+    <p>モノクロ化</p>
+    <canvas id="monoCanvas"></canvas>
+  </div>
+  <div>
+    <p>枠の検出</p>
+    <canvas id="contourCanvas"></canvas>
+  </div>
+  <div>
+    <p>枠を抜き出す</p>
+    <canvas id="cellsCanvas"></canvas>
+  </div>
+  <script>
+    const CANVAS_SIZE = 720;
+    const FRAME_SIZE = 64 * 9;
+    let videoStream;
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const startCameraButton = document.getElementById('startCamera');
+      startCameraButton.addEventListener('click', startCamera);
+      const captureButton = document.getElementById('capture');
+      captureButton.addEventListener('click', capture);
+      const processButton = document.getElementById('process');
+      processButton.addEventListener('click', process);
+
+    const selectImage = document.getElementById('selectImage');
+      selectImage.addEventListener('change', loadImageFromFile);
+
+      drawFrameRectangle();
+    });
+
+    function loadImageFromFile() {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.getElementById('snapshotCanvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+
+          loadFromSnapshotCanvas();
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(selectImage.files[0]);
+    }
+
+    async function startCamera() {
+      console.debug('startCamera');
+
+      clearInputCanvas();
+
+      const video = document.getElementById('camera');
+      video.addEventListener('canplay', () => {
+        console.debug('oncanplay');
+        video.width = video.videoWidth;
+        video.height = video.videoHeight;
+      });
+
+      const constraints = {
+        audio: false,
+        video: { width: CANVAS_SIZE, height: CANVAS_SIZE, facingMode: { ideal: 'environment' } }
+      };
+      await navigator.mediaDevices.getUserMedia(constraints)
+        .then((stream) => {
+          videoStream = stream;
+          video.srcObject = stream;
+          video.play();
+        })
+        .catch((err) => {
+          console.error(`An error occurred: ${err}`);
+        });
+    }
+
+    function clearInputCanvas() {
+      const canvas = document.getElementById('snapshotCanvas');
+      const context = canvas.getContext('2d');
+      context.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    }
+    function drawFrameRectangle() {
+      const canvas = document.getElementById('frameCanvas');
+      const context = canvas.getContext('2d');
+      context.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      context.strokeStyle = 'rgb(0 255 0)';
+      context.strokeRect((CANVAS_SIZE - FRAME_SIZE) / 2, (CANVAS_SIZE - FRAME_SIZE) / 2, FRAME_SIZE, FRAME_SIZE)
+    }
+
+    function capture() {
+
+      const snapshotCanvas = document.getElementById('snapshotCanvas');
+      const snapshotCtx = snapshotCanvas.getContext('2d');
+      const video = document.getElementById('camera');
+      snapshotCanvas.width = CANVAS_SIZE;
+      snapshotCanvas.height = CANVAS_SIZE;
+      snapshotCtx.drawImage(video, 0, 0);
+
+      loadFromSnapshotCanvas();
+
+      videoStream?.getTracks().forEach((track) => track.stop());
+      videoStream = undefined;
+    }
+
+    function loadFromSnapshotCanvas() {
+      const snapshotCanvas = document.getElementById('snapshotCanvas');
+      const inputCanvas = document.getElementById('inputCanvas');
+      inputCanvas.height = FRAME_SIZE;
+      inputCanvas.width = FRAME_SIZE;
+      const inputCtx = inputCanvas.getContext('2d');
+      inputCtx.drawImage(
+        snapshotCanvas,
+        (CANVAS_SIZE - FRAME_SIZE) / 2, (CANVAS_SIZE - FRAME_SIZE) / 2, FRAME_SIZE, FRAME_SIZE,
+        0, 0, FRAME_SIZE, FRAME_SIZE
+      );
+    }
+
+    function process() {
+      const srcImg = cv.imread('inputCanvas');
+
+      const monochromatizedImage = monochromatize(srcImg);
+      cv.imshow('monoCanvas', monochromatizedImage);
+
+      const frame = detectFrame(monochromatizedImage);
+      if (frame) {
+        const color = new cv.Scalar(0, 255, 0, 255);
+        const v = new cv.MatVector();
+        v.push_back(frame);
+        const contourImg = new cv.Mat(monochromatizedImage.size(), cv.CV_8UC4);
+        cv.cvtColor(monochromatizedImage, contourImg, cv.COLOR_GRAY2RGBA);
+        cv.drawContours(contourImg, v, 0, color);
+        cv.imshow('contourCanvas', contourImg);
+        v.delete();
+
+        const frameImg = extractFrame(monochromatizedImage, frame);
+        cv.imshow('cellsCanvas', frameImg);
+        frameImg.delete();
+      } else {
+        console.log("枠を検出できなかった");
+      }
+
+      srcImg.delete();
+      monochromatizedImage.delete();
+      frame?.delete();
+    }
+
+    function monochromatize(srcImg) {
+      const grayImg = new cv.Mat(FRAME_SIZE, FRAME_SIZE, cv.CV_8UC1);
+      cv.cvtColor(srcImg, grayImg, cv.COLOR_BGR2GRAY);
+      const monoImg = new cv.Mat(FRAME_SIZE, FRAME_SIZE, cv.CV_8UC1);
+      cv.adaptiveThreshold(grayImg, monoImg, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 31, 21);
+      grayImg.delete();
+      return monoImg;
+    }
+
+    function detectFrame(srcImg) {
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      cv.findContours(srcImg, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_TC89_L1);
+
+      let maxArea = -1;
+      let largeContour;
+      for (let i = 0; i < contours.size(); i++) {
+        const c = contours.get(i);
+        const area = cv.contourArea(c);
+        if (area > maxArea) {
+          maxArea = area;
+          largeContour = c;
+        }
+      }
+
+      if (maxArea < 0) {
+        return null;
+      }
+
+      // https://labs.eecs.tottori-u.ac.jp/sd/Member/oyamada/OpenCV/html/py_tutorials/py_imgproc/py_contours/py_contour_features/py_contour_features.html#id5
+      const epsilon = 0.1 * cv.arcLength(largeContour, true);
+      const quadrangle = new cv.Mat(largeContour.size(), largeContour.type());
+      cv.approxPolyDP(largeContour, quadrangle, epsilon, true);
+
+      contours.delete();
+      hierarchy.delete();
+
+      return quadrangle.size().height == 4 ? quadrangle : null;
+    }
+
+    function extractFrame(srcImg, frame) {
+      const points = [];
+
+      for (let i = 0; i < frame.size().height; i++) {
+        const row = frame.row(i);
+        const x = row.data32S.at(0);
+        const y = row.data32S.at(1);
+        points.push([x, y]);
+      }
+
+      const sortedY = points.sort((a, b) => a[1] - b[1]);
+      const [topLeft, topRight] = sortedY[0][0] < sortedY[1][0] ? [sortedY[0], sortedY[1]] : [sortedY[1], sortedY[0]];
+      const [bottomLeft, bottomRight] = sortedY[2][0] < sortedY[3][0] ? [sortedY[2], sortedY[3]] : [sortedY[3], sortedY[2]];
+
+      // 変換前の座標(左上から時計回り)
+      const src = cv.matFromArray(4, 1, cv.CV_32FC2, [...topLeft, ...topRight, ...bottomRight, ...bottomLeft]);
+      // 変換後の座標(変換前と対応させて左上から時計回り)
+      const dst = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, FRAME_SIZE - 1, 0, FRAME_SIZE - 1, FRAME_SIZE - 1, 0, FRAME_SIZE - 1]);
+      const matrix = cv.getPerspectiveTransform(src, dst);
+      src.delete();
+      dst.delete();
+
+      const frameImg = new cv.Mat(FRAME_SIZE, FRAME_SIZE, cv.CV_8UC4);
+      cv.warpPerspective(srcImg, frameImg, matrix, new cv.Size(FRAME_SIZE, FRAME_SIZE));
+      matrix.delete();
+
+      return frameImg;
+    }
+
+  </script>
+</body>
+
+</html>
