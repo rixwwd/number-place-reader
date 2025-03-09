@@ -213,7 +213,14 @@
       const monoImg = new cv.Mat(FRAME_SIZE, FRAME_SIZE, cv.CV_8UC1);
       cv.adaptiveThreshold(grayImg, monoImg, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 31, 21);
       grayImg.delete();
-      return monoImg;
+
+      // 枠を抜き出す際の変形でノイズが広がらないよう、細かいノイズを除去しておく
+      const removeNoiseImg = new cv.Mat(FRAME_SIZE, FRAME_SIZE, cv.CV_8U);
+      const kernel = cv.Mat.ones(2, 2, cv.CV_8U);
+      cv.morphologyEx(monoImg, removeNoiseImg, cv.MORPH_OPEN, kernel);
+      kernel.delete();
+      monoImg.delete()
+      return removeNoiseImg;
     }
 
     /**
