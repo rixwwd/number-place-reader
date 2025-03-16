@@ -41,6 +41,7 @@
     }
   </style>
   <script src="https://docs.opencv.org/4.10.0/opencv.js"></script>
+  <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
 </head>
 
 <body>
@@ -67,6 +68,10 @@
   <div>
     <p>枠を抜き出す</p>
     <canvas id="cellsCanvas"></canvas>
+  </div>
+  <div>
+    <p>文字の認識</p>
+    <canvas id="digitCanvas"></canvas>
   </div>
   <script>
     const CANVAS_SIZE = 720;
@@ -173,7 +178,7 @@
       );
     }
 
-    function process() {
+    async function process() {
       const srcImg = cv.imread('inputCanvas');
 
       const monochromatizedImage = monochromatize(srcImg);
@@ -192,6 +197,7 @@
 
         const frameImg = extractFrame(monochromatizedImage, frame);
         cv.imshow('cellsCanvas', frameImg);
+        await readDigit(document.getElementById('cellsCanvas'), document.getElementById('digitCanvas'));
         frameImg.delete();
       } else {
         console.log("枠を検出できなかった");
@@ -292,6 +298,102 @@
       matrix.delete();
 
       return frameImg;
+    }
+
+
+    /**
+     * 数字を読む
+     * @return 読み取り結果
+     */
+    async function readDigit(srcCanvas, dstCanvas) {
+      dstCanvas.width = srcCanvas.width;
+      dstCanvas.height = srcCanvas.height;
+      const ctx = dstCanvas.getContext('2d');
+      ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, srcCanvas.width, srcCanvas.width);
+
+      ctx.strokeStyle = 'rgb(0 255 0)';
+      ctx.fillStyle = 'rgb(0 255 0)';
+      ctx.font = '16px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      const pixel = ctx.getImageData(0, 0, dstCanvas.width, dstCanvas.height).data;
+      const startPos = Math.floor(64 / 2);
+
+      const worker = await Tesseract.createWorker('eng');
+      worker.setParameters({ tessedit_char_whitelist: '0123456789' });
+
+      const rows = [];
+      for (let y = 0; y < 9; y++) {
+        let cols = [];
+        for (let x = 0; x < 9; x++) {
+          const [countX, countY] = countNonZero(pixel, x * 64, y * 64);
+          const left = findBorder(countX, startPos, -1);
+          const right = findBorder(countX, startPos, 1);
+          const top = findBorder(countY, startPos, -1);
+          const bottom = findBorder(countY, startPos, 1);
+
+          const result = await worker.recognize(dstCanvas,
+            { rectangle: { top: top + y * 64, left: left + x * 64, width: right - left, height: bottom - top } },
+            { text: true, blocks: true }
+          );
+          const text = result.data.text.trim();
+          const digit = text.length === 0 ? '' : text;
+          cols.push(digit);
+
+          // 認識範囲の確認用の枠
+          ctx.strokeRect(left + x * 64, top + y * 64, right - left, bottom - top);
+          ctx.fillText(digit, left + x * 64 ,top + y * 64);
+
+        }
+        rows.push(cols);
+      }
+      console.log(rows);
+    }
+
+    /**
+     * 0ではないピクセルデータを数える
+     * @param {pixelData}
+     * @param {x}
+     * @param {y}
+     */
+    function countNonZero(pixelData, x, y) {
+      const countX = [];
+      const countY = [];
+      for (let i = 0; i < 64; i++) {
+        countX[i] = 0;
+        countY[i] = 0;
+      }
+      for (let i = 0; i < 64; i++) {
+        for (let j = 0; j < 64; j++) {
+          const baseIndex = ((y + i) * FRAME_SIZE + (x + j)) * 4;
+          const r = pixelData[baseIndex];
+          const g = pixelData[baseIndex + 1];
+          const b = pixelData[baseIndex + 2];
+          if (r !== 0 || g !== 0 || b !== 0) {
+            countX[j]++;
+            countY[i]++;
+          }
+        }
+      }
+      return [countX, countY];
+    }
+
+    function findBorder(countArray, start, step) {
+      const ZERO_THREASHOLD = 8;
+      const PADDING = 8;
+      let zeroCount = 0;
+      let padding = 0
+      for (let i = start; (i >= 0 && i < countArray.length); i += step) {
+        if (countArray[i] <= ZERO_THREASHOLD) {
+          zeroCount++;
+          if (zeroCount >= PADDING)
+            padding = i;
+        } else {
+          zeroCount = 0
+        }
+      }
+
+      return padding;
     }
 
   </script>
